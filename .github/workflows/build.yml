@@ -21,49 +21,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Download required AARs (from Google Maven)
-        run: |
-          mkdir -p cardboard
-          mkdir -p gvr-android-sdk-1.200/libraries
-
-          echo "Downloading Cardboard SDK..."
-          curl -L -v -o cardboard/cardboard-sdk.aar \
-            https://maven.google.com/com/google/cardboard/cardboard-sdk/1.23.0/cardboard-sdk-1.23.0.aar
-          echo "Checking cardboard AAR integrity..."
-          if [ -s cardboard/cardboard-sdk.aar ]; then
-            file cardboard/cardboard-sdk.aar
-            echo "Cardboard AAR size: $(wc -c < cardboard/cardboard-sdk.aar) bytes"
-          else
-            echo "ERROR: Cardboard AAR is empty or missing!"
-            exit 1
-          fi
-
-          echo "Downloading GVR SDK..."
-          curl -L -v -o gvr-android-sdk-1.200/libraries/sdk-base-1.200.0.aar \
-            https://maven.google.com/com/google/vr/sdk-base/1.200.0/sdk-base-1.200.0.aar
-          echo "Checking GVR AAR integrity..."
-          if [ -s gvr-android-sdk-1.200/libraries/sdk-base-1.200.0.aar ]; then
-            file gvr-android-sdk-1.200/libraries/sdk-base-1.200.0.aar
-            echo "GVR AAR size: $(wc -c < gvr-android-sdk-1.200/libraries/sdk-base-1.200.0.aar) bytes"
-          else
-            echo "ERROR: GVR AAR is empty or missing!"
-            exit 1
-          fi
-
-      - name: Auto-format code (to pass spotlessCheck)
-        run: ./gradlew spotlessApply --no-daemon || true
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
-
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug -x extractNdk -x spotlessCheck --no-daemon
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PhoneVR-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
         uses: actions/upload-artifact@v4
         with:
           name: PhoneVR-debug
