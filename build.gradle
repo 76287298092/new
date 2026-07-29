@@ -45,9 +45,6 @@ allprojects {
         // Sonatype 快照仓库（保留）
         maven { url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots") }
         // GVR / Cardboard 本地 AAR（如项目不需要可删除该 flatDir）
-        flatDir {
-            dirs '../cardboard', '../gvr-android-sdk-1.200/libraries'
-        }
     }
 }
 
