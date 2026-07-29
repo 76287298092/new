@@ -1,0 +1,60 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+    ext.kotlin_version = '1.9.0'
+    ext.extJUnitVersion = "1.2.1"
+    ext.espressoVersion = "3.6.1"
+    ext.servicesVersion = "1.5.0-alpha01"
+    ext.androidXTestVersion = '1.6.1'
+
+    repositories {
+        // 首选腾讯云镜像（国内快速稳定）
+        maven { url 'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/' }
+        // 备用阿里云镜像（也可选）
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        // 官方仓库作为最终 fallback
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.3.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        // 升级 google-services 到 4.4.2 以兼容新版 Firebase
+        classpath 'com.google.gms:google-services:4.4.2'
+        // 升级 protobuf 插件到 0.9.4（修复一些兼容性问题）
+        classpath 'com.google.protobuf:protobuf-gradle-plugin:0.9.4'
+    }
+}
+
+// Spotless 代码格式化插件（保持不变）
+plugins {
+    id "com.diffplug.spotless" version "6.20.0"
+}
+
+allprojects {
+    repositories {
+        maven { url 'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/' }
+        maven { url 'https://maven.aliyun.com/repository/google' }
+        maven { url 'https://maven.aliyun.com/repository/public' }
+        maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
+        google()
+        mavenCentral()
+        // Sonatype 快照仓库（保留）
+        maven { url = uri("https://s01.oss.sonatype.org/content/repositories/snapshots") }
+        // GVR / Cardboard 本地 AAR（如项目不需要可删除该 flatDir）
+        flatDir {
+            dirs '../cardboard', '../gvr-android-sdk-1.200/libraries'
+        }
+    }
+}
+
+// 清理根项目 build 目录的任务
+task cleanBuildFolder(type: Delete) {
+    delete rootProject.buildDir
+}
+
+// 使 clean 任务依赖该自定义清理
+clean.dependsOn(cleanBuildFolder)
