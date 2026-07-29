@@ -1,0 +1,41 @@
+﻿name: Build PhoneVR APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v2
+
+      - name: Download missing AAR dependencies
+        run: |
+          mkdir -p cardboard
+          mkdir -p gvr-android-sdk-1.200/libraries
+          curl -L -o cardboard/cardboard-sdk.aar https://mirrors.cloud.tencent.com/maven/google-maven/com/google/cardboard/cardboard-sdk/1.23.0/cardboard-sdk-1.23.0.aar
+          curl -L -o gvr-android-sdk-1.200/libraries/sdk-base.aar https://mirrors.cloud.tencent.com/maven/google-maven/com/google/vr/sdk-base/1.200.0/sdk-base-1.200.0.aar
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhoneVR-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
