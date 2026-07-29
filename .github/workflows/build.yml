@@ -21,10 +21,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Fix local AAR crash (delete empty file, remove flatDir)
+      - name: Remove flatDir and broken AAR
         run: |
           rm -f cardboard/cardboard-sdk.aar
-          sed -i "/flatDir {/,/}/d" app/build.gradle
+          sed -i "/flatDir {/,/}/d" build.gradle
           sed -i 's/^build\.dependsOn(extractNdk)/\/\/ &/' app/build.gradle
           sed -i 's/^preBuild\.dependsOn("spotlessCheck")/\/\/ &/' app/build.gradle
 
@@ -34,11 +34,6 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: PhoneVR-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
