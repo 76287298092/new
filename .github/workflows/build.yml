@@ -21,12 +21,20 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Download missing AAR dependencies
+      - name: Download AARs for extractNdk task
         run: |
+          # Cardboard AAR
           mkdir -p cardboard
+          curl -L -o cardboard/cardboard-sdk.aar \
+            https://mirrors.cloud.tencent.com/maven/google-maven/com/google/cardboard/cardboard-sdk/1.23.0/cardboard-sdk-1.23.0.aar
+
+          # GVR AAR —— 注意文件名必须和 extractNdk 里的完全一致
           mkdir -p gvr-android-sdk-1.200/libraries
-          curl -L -o cardboard/cardboard-sdk.aar https://mirrors.cloud.tencent.com/maven/google-maven/com/google/cardboard/cardboard-sdk/1.23.0/cardboard-sdk-1.23.0.aar
-          curl -L -o gvr-android-sdk-1.200/libraries/sdk-base.aar https://mirrors.cloud.tencent.com/maven/google-maven/com/google/vr/sdk-base/1.200.0/sdk-base-1.200.0.aar
+          curl -L -o gvr-android-sdk-1.200/libraries/sdk-base-1.200.0.aar \
+            https://mirrors.cloud.tencent.com/maven/google-maven/com/google/vr/sdk-base/1.200.0/sdk-base-1.200.0.aar
+
+      - name: Auto-format code to pass spotlessCheck
+        run: ./gradlew spotlessApply --no-daemon || true
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
