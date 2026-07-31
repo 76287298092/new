@@ -21,7 +21,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers and fix Gradle config
+      - name: Create missing headers, fix C++ source, and clean Gradle config
         run: |
           # 1. alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
@@ -170,7 +170,14 @@ jobs:
           #endif
           JSON_EOF
 
-          # 3. 清理 Gradle 配置
+          # 3. 修复 alvr_main.cpp 中的数组赋值和 cardboard.h
+          sed -i 's|#include "cardboard.h"|// &|' app/src/main/cpp/alvr_main.cpp
+          sed -i 's|pose\.orientation = {0\.0f, 0\.0f, 0\.0f, 1\.0f};|pose.orientation[0]=0.0f; pose.orientation[1]=0.0f; pose.orientation[2]=0.0f; pose.orientation[3]=1.0f;|' app/src/main/cpp/alvr_main.cpp
+          sed -i 's|pose\.position = {0\.0f, 0\.0f, 0\.0f};|pose.position[0]=0.0f; pose.position[1]=0.0f; pose.position[2]=0.0f;|' app/src/main/cpp/alvr_main.cpp
+          sed -i 's|pose\.position = {x, z, -y};|pose.position[0]=x; pose.position[1]=z; pose.position[2]=-y;|' app/src/main/cpp/alvr_main.cpp
+          sed -i '/pose\.orientation = {/,/};/ s/pose\.orientation = {/pose.orientation[0]=/; s/,/;\npose.orientation[1]=/; s/,/;\npose.orientation[2]=/; s/,/;\npose.orientation[3]=/; s/};/;/' app/src/main/cpp/alvr_main.cpp || true
+
+          # 4. 清理 Gradle 配置
           sed -i "/com.google.gms.google-services/d" app/build.gradle
           sed -i "/firebase/d" app/build.gradle
           sed -i "/cardboard/d" app/build.gradle
@@ -180,7 +187,7 @@ jobs:
           sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          # 4. 精简 Kotlin/Java
+          # 5. 精简 Kotlin/Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
