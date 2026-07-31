@@ -530,22 +530,19 @@ jobs:
           Java_viritualisres_phonevr_ALVRActivity_switchViewerNative(JNIEnv *, jobject) {}
           CPP_EOF
 
-          # 4. 处理 app/libraries/jni：占位文件保留（CMake 需要）
-          mkdir -p app/libraries/jni/arm64-v8a
-          rm -f app/libraries/jni/arm64-v8a/*.so
-          touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
-          touch app/libraries/jni/arm64-v8a/libgvr.so
-          touch app/libraries/jni/arm64-v8a/libgvr_audio.so
-          touch app/libraries/jni/arm64-v8a/libnative-lib-gvr.so
+          # 4. 处理 app/libraries/jni：删除所有真实/占位库，避免与 CMake 输出冲突
+          rm -rf app/libraries/jni/arm64-v8a
 
-          # 5. 注释 CMakeLists.txt 中不必要的库链接
-          sed -i '/libGfxPluginCardboard\|libgvr\|libnative-lib-gvr/s/^/#/' app/CMakeLists.txt
-
-          # 6. 将 libalvr_client_core.so 复制到默认 JNI 库目录（确保打包）
+          # 5. 确保 libalvr_client_core.so 被打包，但删除与 CMake 输出重复的 libnative-lib-alvr.so
           mkdir -p app/src/main/jniLibs/arm64-v8a
           cp ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so app/src/main/jniLibs/arm64-v8a/
+          rm -f app/src/main/jniLibs/arm64-v8a/libnative-lib-alvr.so
+          rm -f app/src/main/jniLibs/arm64-v8a/libnative-lib-gvr.so
+          rm -f app/src/main/jniLibs/arm64-v8a/libgvr.so
+          rm -f app/src/main/jniLibs/arm64-v8a/libgvr_audio.so
+          rm -f app/src/main/jniLibs/arm64-v8a/libGfxPluginCardboard.so
 
-          # 7. 清理 Gradle 配置
+          # 6. 清理 Gradle 配置
           sed -i "/com.google.gms.google-services/d" app/build.gradle
           sed -i "/firebase/d" app/build.gradle
           sed -i "/cardboard/d" app/build.gradle
@@ -555,25 +552,23 @@ jobs:
           sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          # 8. 限制只编译 arm64-v8a，但不修改 jniLibs.srcDirs（保持默认）
+          # 7. 限制只编译 arm64-v8a 架构 (不修改 jniLibs.srcDirs)
           python3 -c "
           import re
           with open('app/build.gradle', 'r') as f:
               content = f.read()
-          # 删除已有的 ndk 块
           content = re.sub(r'ndk\s*{[^}]*}', '', content, flags=re.DOTALL)
-          # 在 defaultConfig 中插入只编译 arm64-v8a
           content = re.sub(r'(defaultConfig\s*{)([^}]*)(})',
                            r'\1\2\n        ndk {\n            abiFilters \"arm64-v8a\"\n        }\n\3',
                            content, flags=re.DOTALL)
-          # 移除之前可能残留的 jniLibs.srcDirs 修改（如果有）
-          content = re.sub(r'(jniLibs\.srcDirs\s*=\s*\[[^\]]*\])', r'// \1 (removed)', content)
-          content = re.sub(r'(jniLibs\.srcDirs\s*\+=?\s*\[[^\]]*\])', r'// \1 (removed)', content)
+          # 移除可能残留的 jniLibs.srcDirs 修改
+          content = re.sub(r'(jniLibs\.srcDirs\s*=\s*\[[^\]]*\])', r'// \1', content)
+          content = re.sub(r'(jniLibs\.srcDirs\s*\+=?\s*\[[^\]]*\])', r'// \1', content)
           with open('app/build.gradle', 'w') as f:
               f.write(content)
           "
 
-          # 9. 精简 Kotlin/Java
+          # 8. 精简 Kotlin/Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
