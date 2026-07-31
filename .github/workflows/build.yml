@@ -21,9 +21,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing C header and clean Kotlin source
+      - name: Create missing headers and placeholder libraries
         run: |
-          mkdir -p ALVR/build/alvr_client_core/arm64-v8a
+          # 1. 头文件
+          mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
           #ifndef ALVR_CLIENT_CORE_H
           #define ALVR_CLIENT_CORE_H
@@ -74,10 +75,14 @@ jobs:
           #endif
           HEADER_EOF
 
-          # 创建占位 libalvr_client_core.so，防止 CMake 报错（运行时使用 jniLibs 中的真实库）
+          # 2. 占位库文件（让 CMake 链接通过）
+          mkdir -p ALVR/build/alvr_client_core/arm64-v8a
           touch ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so
 
-          # 覆盖 OdyxEngineWrapper.kt 为精简版
+          mkdir -p app/libraries/jni/arm64-v8a
+          touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
+
+          # 3. 精简版 Kotlin
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
@@ -105,7 +110,7 @@ jobs:
           }
           KOTLIN_EOF
 
-          # 创建 NativeBridge.java
+          # 4. Java 桥接
           cat > app/src/odyx/java/com/alvr/odyx/NativeBridge.java << 'JAVA_EOF'
           package com.alvr.odyx;
 
@@ -115,10 +120,10 @@ jobs:
           }
           JAVA_EOF
 
-          # 删除 OdyxVRApplication.kt
+          # 5. 清理多余文件
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
-      - name: Fix app/build.gradle (remove Google Services, Cardboard, GVR, zxing, Cargo)
+      - name: Fix app/build.gradle
         run: |
           sed -i "/com.google.gms.google-services/d" app/build.gradle
           sed -i "/firebase/d" app/build.gradle
