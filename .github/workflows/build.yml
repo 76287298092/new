@@ -541,19 +541,9 @@ jobs:
           # 5. 修改 CMakeLists.txt，注释掉不需要的库链接
           sed -i '/libGfxPluginCardboard\|libgvr\|libnative-lib-gvr/s/^/#/' app/CMakeLists.txt
 
-          # 6. 复制 libalvr_client_core.so 到 jniLibs 目录以便打包
-          mkdir -p src/main/jniLibs/arm64-v8a
-          # 假设 libalvr_client_core.so 位于 ALVR/build/alvr_client_core/arm64-v8a/
-          cp ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so src/main/jniLibs/arm64-v8a/ 2>/dev/null || echo "Warning: libalvr_client_core.so not found in expected path, trying fallback..."
-          # 如果上面失败，尝试从 app/libraries/jni 复制（如果存在）
-          if [ ! -f src/main/jniLibs/arm64-v8a/libalvr_client_core.so ]; then
-              if [ -f app/libraries/jni/arm64-v8a/libalvr_client_core.so ]; then
-                  cp app/libraries/jni/arm64-v8a/libalvr_client_core.so src/main/jniLibs/arm64-v8a/
-              else
-                  echo "ERROR: libalvr_client_core.so not found! Please ensure it is present in ALVR/build/alvr_client_core/arm64-v8a/ or app/libraries/jni/arm64-v8a/"
-                  exit 1
-              fi
-          fi
+          # 6. 复制 libalvr_client_core.so 到 app/libs（自定义目录，避免与 CMake 输出冲突）
+          mkdir -p app/libs/arm64-v8a
+          cp ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so app/libs/arm64-v8a/ 2>/dev/null || echo "Warning: libalvr_client_core.so not found, skipping..."
 
           # 7. 清理 Gradle 配置
           sed -i "/com.google.gms.google-services/d" app/build.gradle
@@ -565,7 +555,7 @@ jobs:
           sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          # 8. 限制只编译 arm64-v8a 并设置 jniLibs 源集为 src/main/jniLibs
+          # 8. 限制只编译 arm64-v8a，并设置 jniLibs 源集为 app/libs（仅打包依赖库）
           python3 -c "
           import re
           with open('app/build.gradle', 'r') as f:
@@ -579,9 +569,9 @@ jobs:
           # 移除所有旧的 jniLibs.srcDirs 设置
           content = re.sub(r'(jniLibs\.srcDirs\s*=\s*\[[^\]]*\])', r'// \1', content)
           content = re.sub(r'(jniLibs\.srcDirs\s*\+=?\s*\[[^\]]*\])', r'// \1', content)
-          # 设置 main 的 jniLibs.srcDirs 为 src/main/jniLibs
+          # 设置 main 的 jniLibs.srcDirs 为 app/libs
           content = re.sub(r'(sourceSets\s*{)',
-                           r'\1\n        main {\n            jniLibs.srcDirs = [\"src/main/jniLibs\"]\n        }',
+                           r'\1\n        main {\n            jniLibs.srcDirs = [\"app/libs\"]\n        }',
                            content, flags=re.DOTALL)
           with open('app/build.gradle', 'w') as f:
               f.write(content)
