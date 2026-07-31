@@ -21,76 +21,14 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers, placeholder libs, and final C++ source
+      - name: Download real ALVR library and create all missing files
         run: |
-          # 1. 完整的 alvr_client_core.h（包含 AlvrClientCapabilities）
-          mkdir -p ALVR/build/alvr_client_core
-          cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
-          #ifndef ALVR_CLIENT_CORE_H
-          #define ALVR_CLIENT_CORE_H
-          #include <stdint.h>
-          #include <stdbool.h>
-          #ifdef __cplusplus
-          extern "C" {
-          #endif
-          typedef enum { ALVR_LOG_LEVEL_DEBUG, ALVR_LOG_LEVEL_INFO, ALVR_LOG_LEVEL_WARN, ALVR_LOG_LEVEL_ERROR } AlvrLogLevel;
-          typedef struct { float x, y, z, w; } AlvrQuat;
-          typedef struct { float orientation[4]; float position[3]; } AlvrPose;
-          typedef struct {
-              float position[3], orientation[4], linear_velocity[3], angular_velocity[3];
-              uint64_t device_id;
-              AlvrPose pose;
-          } AlvrDeviceMotion;
-          typedef struct { float left, right, up, down; } AlvrFov;
-          typedef struct { float fov[4]; AlvrPose pose; } AlvrViewParams;
-          typedef struct { int width, height, format, length; unsigned char *data; uint64_t timestamp; } AlvrStreamedFrame;
-          typedef enum { ALVR_EVENT_HUD_MESSAGE_UPDATED, ALVR_EVENT_STREAMING_STARTED, ALVR_EVENT_STREAMING_STOPPED } AlvrEventTag;
-          typedef struct { AlvrEventTag tag; union { struct { int view_width, view_height; } STREAMING_STARTED; }; } AlvrEvent;
-          typedef struct { int view_resolution_width, view_resolution_height; int swapchain_length; const uint32_t **swapchain_textures; bool enable_foveation; float foveation_center_size_x, foveation_center_size_y, foveation_center_shift_x, foveation_center_shift_y, foveation_edge_ratio_x, foveation_edge_ratio_y; } AlvrStreamConfig;
-          typedef struct { AlvrPose pose; AlvrFov fov; int swapchain_index; } AlvrViewInput;
-          typedef struct {
-              int default_view_width, default_view_height;
-              bool external_decoder;
-              float* refresh_rates;
-              int refresh_rates_count;
-              bool foveated_encoding;
-              bool encoder_high_profile;
-              bool encoder_10_bits;
-              bool encoder_av1;
-          } AlvrClientCapabilities;
-
-          void alvr_log(AlvrLogLevel level, const char* msg);
-          void* alvr_initialize(AlvrClientCapabilities caps);
-          void alvr_destroy(void);
-          void alvr_initialize_opengl(void);
-          void alvr_destroy_opengl(void);
-          void alvr_resume(void);
-          void alvr_pause(void);
-          void alvr_pause_opengl(void);
-          void alvr_resume_opengl(int w, int h, const uint32_t* textures[2], int count, bool foveated);
-          void alvr_send_tracking(uint64_t timestamp, AlvrViewParams* views, AlvrDeviceMotion* head, int view_count, AlvrFov* fovs, void* extra);
-          int64_t alvr_get_frame(AlvrViewParams* params, void** buffer);
-          void alvr_render_stream_opengl(void* buffer, uint32_t* swapchain_indices);
-          void alvr_start_stream_opengl(AlvrStreamConfig config);
-          void alvr_report_submit(uint64_t timestamp, int index);
-          void alvr_render_lobby_opengl(AlvrViewInput* inputs);
-          void alvr_update_hud_message_opengl(const char* msg);
-          bool alvr_poll_event(AlvrEvent* event);
-          int alvr_hud_message(char* buffer);
-          uint64_t alvr_path_string_to_id(const char* path);
-          int64_t alvr_get_head_prediction_offset_ns(void);
-          void alvr_send_battery(uint64_t id, float level, bool plugged);
-          int alvr_get_settings_json(char* buffer);
-          void alvr_initialize_android_context(void* vm, void* context);
-          #ifdef __cplusplus
-          }
-          #endif
-          #endif
-          HEADER_EOF
-
-          # 2. 占位库
+          # 1. 从 PhoneVR 官方 APK 提取 libalvr_client_core.so
           mkdir -p ALVR/build/alvr_client_core/arm64-v8a
-          touch ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so
+          curl -L -o /tmp/pvr.apk "https://github.com/Viritualis/PhoneVR/releases/download/v2.3.1/PhoneVR-v2.3.1.apk"
+          unzip -j /tmp/pvr.apk "lib/arm64-v8a/libalvr_client_core.so" -d ALVR/build/alvr_client_core/arm64-v8a/
+
+          # 2. 其他占位库（Cardboard 等）
           mkdir -p app/libraries/jni/arm64-v8a
           touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
 
@@ -177,7 +115,7 @@ jobs:
           #endif
           JSON_EOF
 
-          # 4. 最终版 alvr_main.cpp（完全修复所有类型转换和 API 调用）
+          # 4. 最终版 alvr_main.cpp（之前已通过编译的版本）
           cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
           #include "alvr_client_core.h"
           #include <GLES3/gl3.h>
@@ -576,7 +514,7 @@ jobs:
 
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
-          # 6. 清理依赖
+          # 6. 清理 Gradle 配置
           sed -i "/com.google.gms.google-services/d" app/build.gradle
           sed -i "/firebase/d" app/build.gradle
           sed -i "/cardboard/d" app/build.gradle
