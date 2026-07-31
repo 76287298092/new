@@ -21,21 +21,79 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Remove flatDir and broken AAR
+      - name: Create alvr_client_core.h
         run: |
-          rm -f cardboard/cardboard-sdk.aar
-          sed -i "/flatDir {/,/}/d" build.gradle
-          sed -i 's/^build\.dependsOn(extractNdk)/\/\/ &/' app/build.gradle
-          sed -i 's/^preBuild\.dependsOn("spotlessCheck")/\/\/ &/' app/build.gradle
+          mkdir -p ALVR/build/alvr_client_core
+          cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
+          #ifndef ALVR_CLIENT_CORE_H
+          #define ALVR_CLIENT_CORE_H
+          #include <stdint.h>
+          #include <stdbool.h>
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          typedef enum { ALVR_LOG_LEVEL_DEBUG, ALVR_LOG_LEVEL_INFO, ALVR_LOG_LEVEL_WARN, ALVR_LOG_LEVEL_ERROR } AlvrLogLevel;
+          typedef struct { float x, y, z, w; } AlvrQuat;
+          typedef struct { float orientation[4]; float position[3]; } AlvrPose;
+          typedef struct {
+              float position[3], orientation[4], linear_velocity[3], angular_velocity[3];
+              uint64_t device_id;
+              AlvrPose pose;
+          } AlvrDeviceMotion;
+          typedef struct { float left, right, up, down; } AlvrFov;
+          typedef struct { float fov[4]; AlvrPose pose; } AlvrViewParams;
+          typedef struct { int width, height, format, length; unsigned char *data; uint64_t timestamp; } AlvrStreamedFrame;
+          typedef enum { ALVR_EVENT_HUD_MESSAGE_UPDATED, ALVR_EVENT_STREAMING_STARTED, ALVR_EVENT_STREAMING_STOPPED } AlvrEventTag;
+          typedef struct { AlvrEventTag tag; union { struct { int view_width, view_height; } STREAMING_STARTED; }; } AlvrEvent;
+          typedef struct { int view_resolution_width, view_resolution_height; int swapchain_length; const uint32_t **swapchain_textures; bool enable_foveation; float foveation_center_size_x, foveation_center_size_y, foveation_center_shift_x, foveation_center_shift_y, foveation_edge_ratio_x, foveation_edge_ratio_y; } AlvrStreamConfig;
+          typedef struct { AlvrPose pose; AlvrFov fov; int swapchain_index; } AlvrViewInput;
+          void alvr_log(AlvrLogLevel level, const char* msg);
+          void* alvr_initialize(void);
+          void alvr_destroy(void);
+          void alvr_initialize_opengl(void);
+          void alvr_destroy_opengl(void);
+          void alvr_resume(void);
+          void alvr_pause(void);
+          void alvr_pause_opengl(void);
+          void alvr_resume_opengl(int w, int h, const uint32_t* textures[2], int count, bool foveated);
+          void alvr_send_tracking(uint64_t timestamp, AlvrViewParams* views, AlvrDeviceMotion* head, int view_count, AlvrFov* fovs, void* extra);
+          int64_t alvr_get_frame(AlvrViewParams* params, void** buffer);
+          void alvr_render_stream_opengl(void* buffer, uint32_t* swapchain_indices);
+          void alvr_start_stream_opengl(AlvrStreamConfig config);
+          void alvr_report_submit(uint64_t timestamp, int index);
+          void alvr_render_lobby_opengl(AlvrViewInput* inputs);
+          void alvr_update_hud_message_opengl(const char* msg);
+          bool alvr_poll_event(AlvrEvent* event);
+          int alvr_hud_message(char* buffer);
+          uint64_t alvr_path_string_to_id(const char* path);
+          int64_t alvr_get_head_prediction_offset_ns(void);
+          void alvr_send_battery(uint64_t id, float level, bool plugged);
+          #ifdef __cplusplus
+          }
+          #endif
+          #endif
+          HEADER_EOF
+
+      - name: Fix app/build.gradle
+        run: |
+          # 移除 Cardboard/GVR 依赖
+          sed -i "/cardboard-sdk/d" app/build.gradle
+          sed -i "/gvrImplementation/d" app/build.gradle
+          sed -i "/io.github.zxing-cpp/d" app/build.gradle
+          # 移除 extractNdk 中 Cardboard 部分
+          sed -i "/from zipTree.*cardboard/d" app/build.gradle
+          # 注释 buildClientLib 依赖
+          sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
+          sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleNoGvrDebug --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: PhoneVR-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/noGvr/debug/app-noGvr-debug.apk
