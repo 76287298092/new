@@ -21,9 +21,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers, placeholder libs, overwrite C++ source, and clean Gradle config
+      - name: Create missing headers, placeholder libs, and final C++ source
         run: |
-          # 1. 头文件
+          # 1. 完整的 alvr_client_core.h（包含 AlvrClientCapabilities）
           mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
           #ifndef ALVR_CLIENT_CORE_H
@@ -48,8 +48,19 @@ jobs:
           typedef struct { AlvrEventTag tag; union { struct { int view_width, view_height; } STREAMING_STARTED; }; } AlvrEvent;
           typedef struct { int view_resolution_width, view_resolution_height; int swapchain_length; const uint32_t **swapchain_textures; bool enable_foveation; float foveation_center_size_x, foveation_center_size_y, foveation_center_shift_x, foveation_center_shift_y, foveation_edge_ratio_x, foveation_edge_ratio_y; } AlvrStreamConfig;
           typedef struct { AlvrPose pose; AlvrFov fov; int swapchain_index; } AlvrViewInput;
+          typedef struct {
+              int default_view_width, default_view_height;
+              bool external_decoder;
+              float* refresh_rates;
+              int refresh_rates_count;
+              bool foveated_encoding;
+              bool encoder_high_profile;
+              bool encoder_10_bits;
+              bool encoder_av1;
+          } AlvrClientCapabilities;
+
           void alvr_log(AlvrLogLevel level, const char* msg);
-          void* alvr_initialize(void);
+          void* alvr_initialize(AlvrClientCapabilities caps);
           void alvr_destroy(void);
           void alvr_initialize_opengl(void);
           void alvr_destroy_opengl(void);
@@ -69,6 +80,8 @@ jobs:
           uint64_t alvr_path_string_to_id(const char* path);
           int64_t alvr_get_head_prediction_offset_ns(void);
           void alvr_send_battery(uint64_t id, float level, bool plugged);
+          int alvr_get_settings_json(char* buffer);
+          void alvr_initialize_android_context(void* vm, void* context);
           #ifdef __cplusplus
           }
           #endif
@@ -120,7 +133,7 @@ jobs:
                   bool contains(const std::string& key) const { return obj.find(key) != obj.end(); }
                   bool empty() const { return obj.empty() && arr.empty(); }
                   int size() const { return arr.size(); }
-                  json parse(const std::string& s) { return json(s); }
+                  static json parse(const std::string& s) { return json(s); }
               private:
                   value_t type = value_t::null;
                   std::string val;
@@ -164,7 +177,7 @@ jobs:
           #endif
           JSON_EOF
 
-          # 4. 覆盖正确的 C++ 源码
+          # 4. 最终版 alvr_main.cpp（完全修复所有类型转换和 API 调用）
           cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
           #include "alvr_client_core.h"
           #include <GLES3/gl3.h>
@@ -303,9 +316,10 @@ jobs:
                   out[i] = v[i] + 2 * (q.w * rv[i] + rrv[i]);
           }
 
-          void offsetPosWithQuat(AlvrQuat q, float offset[3], float outPos[3]) {
+          void offsetPosWithQuat(float q[4], float offset[3], float outPos[3]) {
+              AlvrQuat quat = {q[0], q[1], q[2], q[3]};
               float rotatedOffset[3];
-              quatVecMultiply(q, offset, rotatedOffset);
+              quatVecMultiply(quat, offset, rotatedOffset);
               outPos[0] -= rotatedOffset[0];
               outPos[1] -= rotatedOffset[1] - FLOOR_HEIGHT;
               outPos[2] -= rotatedOffset[2];
@@ -331,12 +345,12 @@ jobs:
               float headToEye[3] = {CTX.eyeOffsets[0], 0.0f, 0.0f};
               CTX.viewParams[0].pose = headPose;
               offsetPosWithQuat(headPose.orientation, headToEye, CTX.viewParams[0].pose.position);
-              CTX.viewParams[0].fov = CTX.fovArr[0];
+              memcpy(&CTX.viewParams[0].fov, &CTX.fovArr[0], sizeof(AlvrFov));
 
               headToEye[0] = CTX.eyeOffsets[1];
               CTX.viewParams[1].pose = headPose;
               offsetPosWithQuat(headPose.orientation, headToEye, CTX.viewParams[1].pose.position);
-              CTX.viewParams[1].fov = CTX.fovArr[1];
+              memcpy(&CTX.viewParams[1].fov, &CTX.fovArr[1], sizeof(AlvrFov));
           }
 
           void inputThread() {
@@ -508,14 +522,14 @@ jobs:
                       for (int eye = 0; eye < 2; eye++) {
                           float headToEye[3] = {CTX.eyeOffsets[eye], 0.0f, 0.0f};
                           offsetPosWithQuat(pose.orientation, headToEye, viewInputs[eye].pose.position);
-                          viewInputs[eye].pose.orientation = pose.orientation;
+                          memcpy(&viewInputs[eye].pose.orientation, pose.orientation, sizeof(pose.orientation));
                           viewInputs[eye].fov = getFov(eye);
                           viewInputs[eye].swapchain_index = 0;
                       }
                       alvr_render_lobby_opengl(viewInputs);
                   }
-              } catch (const json::exception &e) {
-                  __android_log_print(ANDROID_LOG_ERROR, "OdyxVR", "JSON exception: %s", e.what());
+              } catch (const std::exception &e) {
+                  __android_log_print(ANDROID_LOG_ERROR, "OdyxVR", "Exception: %s", e.what());
               }
           }
 
@@ -523,7 +537,7 @@ jobs:
           Java_viritualisres_phonevr_ALVRActivity_switchViewerNative(JNIEnv *, jobject) {}
           CPP_EOF
 
-          # 5. 精简 Kotlin / Java
+          # 5. 精简 Kotlin/Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
@@ -562,7 +576,7 @@ jobs:
 
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
-          # 6. 彻底删除 Google Services 插件和所有不需要的依赖
+          # 6. 清理依赖
           sed -i "/com.google.gms.google-services/d" app/build.gradle
           sed -i "/firebase/d" app/build.gradle
           sed -i "/cardboard/d" app/build.gradle
