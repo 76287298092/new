@@ -23,6 +23,11 @@ jobs:
 
       - name: Create missing headers, overwrite C++ source, and clean Gradle config
         run: |
+          # 0. 删除可能引起重复的预编译库目录
+          rm -rf app/libraries/jni
+          # 若 app/libraries 下无其他重要文件，可一并删除（可选）
+          # rm -rf app/libraries
+
           # 1. alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
