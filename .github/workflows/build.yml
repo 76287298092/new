@@ -21,7 +21,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers, placeholder libraries, and json.hpp
+      - name: Create missing headers, placeholder libs, and json.hpp
         run: |
           # 1. alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
@@ -81,9 +81,9 @@ jobs:
           mkdir -p app/libraries/jni/arm64-v8a
           touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
 
-          # 3. nlohmann/json.hpp 最小实现（使编译通过）
-          mkdir -p common/libs/json/single_include
-          cat > common/libs/json/single_include/json.hpp << 'JSON_EOF'
+          # 3. nlohmann/json.hpp（放在 cardboard 目录下，CMake 一定能找到）
+          mkdir -p cardboard/nlohmann
+          cat > cardboard/nlohmann/json.hpp << 'JSON_EOF'
           #ifndef NLOHMANN_JSON_HPP
           #define NLOHMANN_JSON_HPP
           #include <string>
@@ -120,6 +120,7 @@ jobs:
                   bool contains(const std::string& key) const { return obj.find(key) != obj.end(); }
                   bool empty() const { return obj.empty() && arr.empty(); }
                   int size() const { return arr.size(); }
+                  json parse(const std::string& s) { return json(s); }  // 简易解析
               private:
                   value_t type = value_t::null;
                   std::string val;
