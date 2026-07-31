@@ -21,7 +21,7 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers, placeholder libs, and overwrite C++ source
+      - name: Create missing headers, placeholder libs, overwrite C++ source, and clean Gradle config
         run: |
           # 1. 头文件
           mkdir -p ALVR/build/alvr_client_core
@@ -81,7 +81,7 @@ jobs:
           mkdir -p app/libraries/jni/arm64-v8a
           touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
 
-          # 3. nlohmann/json.hpp
+          # 3. json.hpp
           mkdir -p cardboard/nlohmann
           cat > cardboard/nlohmann/json.hpp << 'JSON_EOF'
           #ifndef NLOHMANN_JSON_HPP
@@ -164,7 +164,7 @@ jobs:
           #endif
           JSON_EOF
 
-          # 4. 用完整无误的 alvr_main.cpp 覆盖仓库中的版本
+          # 4. 覆盖正确的 C++ 源码
           cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
           #include "alvr_client_core.h"
           #include <GLES3/gl3.h>
@@ -184,7 +184,6 @@ jobs:
 
           uint64_t HEAD_ID = alvr_path_string_to_id("/user/head");
           const float FLOOR_HEIGHT = 1.5;
-          const int MAXIMUM_TRACKING_FRAMES = 360;
 
           JavaVM *g_vm = nullptr;
 
@@ -524,7 +523,7 @@ jobs:
           Java_viritualisres_phonevr_ALVRActivity_switchViewerNative(JNIEnv *, jobject) {}
           CPP_EOF
 
-          # 5. 精简版 Kotlin 和 Java
+          # 5. 精简 Kotlin / Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
@@ -563,7 +562,9 @@ jobs:
 
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
-          # 6. 清理 app/build.gradle
+          # 6. 彻底删除 Google Services 插件和所有不需要的依赖
+          sed -i "/com.google.gms.google-services/d" app/build.gradle
+          sed -i "/firebase/d" app/build.gradle
           sed -i "/cardboard/d" app/build.gradle
           sed -i "/gvrImplementation/d" app/build.gradle
           sed -i "/io.github.zxing-cpp/d" app/build.gradle
