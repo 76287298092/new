@@ -21,9 +21,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers and placeholder libraries
+      - name: Create missing headers, placeholder libraries, and json.hpp
         run: |
-          # 1. 头文件
+          # 1. alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
           #ifndef ALVR_CLIENT_CORE_H
@@ -75,14 +75,95 @@ jobs:
           #endif
           HEADER_EOF
 
-          # 2. 占位库文件（让 CMake 链接通过）
+          # 2. 占位库
           mkdir -p ALVR/build/alvr_client_core/arm64-v8a
           touch ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so
-
           mkdir -p app/libraries/jni/arm64-v8a
           touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
 
-          # 3. 精简版 Kotlin
+          # 3. nlohmann/json.hpp 最小实现（使编译通过）
+          mkdir -p common/libs/json/single_include
+          cat > common/libs/json/single_include/json.hpp << 'JSON_EOF'
+          #ifndef NLOHMANN_JSON_HPP
+          #define NLOHMANN_JSON_HPP
+          #include <string>
+          #include <vector>
+          #include <map>
+          #include <initializer_list>
+          #include <stdexcept>
+          #include <sstream>
+          namespace nlohmann {
+              class json {
+              public:
+                  enum class value_t { null, boolean, number_integer, number_float, string, array, object };
+                  json() = default;
+                  json(const std::string& s) : type(value_t::string), val(s) {}
+                  json(const char* s) : type(value_t::string), val(s) {}
+                  json(int v) : type(value_t::number_integer), ival(v) {}
+                  json(double v) : type(value_t::number_float), fval(v) {}
+                  json(bool v) : type(value_t::boolean), bval(v) {}
+                  json(std::initializer_list<std::pair<const std::string, json>> init) {
+                      type = value_t::object;
+                      for (auto& p : init) obj[p.first] = p.second;
+                  }
+                  json(std::initializer_list<json> init) {
+                      type = value_t::array;
+                      arr = init;
+                  }
+                  std::string dump() const {
+                      std::stringstream ss;
+                      dump(ss);
+                      return ss.str();
+                  }
+                  json& operator[](const std::string& key) { return obj[key]; }
+                  json& operator[](int idx) { return arr[idx]; }
+                  bool contains(const std::string& key) const { return obj.find(key) != obj.end(); }
+                  bool empty() const { return obj.empty() && arr.empty(); }
+                  int size() const { return arr.size(); }
+              private:
+                  value_t type = value_t::null;
+                  std::string val;
+                  int ival = 0;
+                  double fval = 0.0;
+                  bool bval = false;
+                  std::vector<json> arr;
+                  std::map<std::string, json> obj;
+                  void dump(std::stringstream& ss) const {
+                      switch (type) {
+                          case value_t::null: ss << "null"; break;
+                          case value_t::boolean: ss << (bval ? "true" : "false"); break;
+                          case value_t::number_integer: ss << ival; break;
+                          case value_t::number_float: ss << fval; break;
+                          case value_t::string: ss << "\"" << val << "\""; break;
+                          case value_t::array: {
+                              ss << "[";
+                              for (size_t i = 0; i < arr.size(); ++i) {
+                                  if (i) ss << ",";
+                                  arr[i].dump(ss);
+                              }
+                              ss << "]";
+                              break;
+                          }
+                          case value_t::object: {
+                              ss << "{";
+                              bool first = true;
+                              for (auto& p : obj) {
+                                  if (!first) ss << ",";
+                                  ss << "\"" << p.first << "\":";
+                                  p.second.dump(ss);
+                                  first = false;
+                              }
+                              ss << "}";
+                              break;
+                          }
+                      }
+                  }
+              };
+          }
+          #endif
+          JSON_EOF
+
+          # 4. 精简版 Kotlin
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
@@ -110,7 +191,7 @@ jobs:
           }
           KOTLIN_EOF
 
-          # 4. Java 桥接
+          # 5. Java 桥接
           cat > app/src/odyx/java/com/alvr/odyx/NativeBridge.java << 'JAVA_EOF'
           package com.alvr.odyx;
 
@@ -120,7 +201,6 @@ jobs:
           }
           JAVA_EOF
 
-          # 5. 清理多余文件
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
       - name: Fix app/build.gradle
