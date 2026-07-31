@@ -540,10 +540,20 @@ jobs:
           sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          # 5. 限制只编译 arm64-v8a 架构（因为我们只提供了该架构的预编译库）
-          sed -i "/ndk {/,/}/c\ \ \ \ ndk {\n        abiFilters 'arm64-v8a'\n    }" app/build.gradle || true
-          # 如果上面失败，直接在 defaultConfig 中添加
-          sed -i "/defaultConfig {/a\ \ \ \ ndk {\n        abiFilters 'arm64-v8a'\n    }" app/build.gradle || true
+          # 5. 限制只编译 arm64-v8a 架构 (使用Python精确修改)
+          python3 -c "
+          import re
+          with open('app/build.gradle', 'r') as f:
+              content = f.read()
+          # 删除已有的 ndk 块 (包括可能存在的 abiFilters)
+          content = re.sub(r'ndk\s*{[^}]*}', '', content, flags=re.DOTALL)
+          # 在 defaultConfig 块中插入 ndk 配置
+          content = re.sub(r'(defaultConfig\s*{)([^}]*)(})',
+                           r'\1\2\n        ndk {\n            abiFilters \"arm64-v8a\"\n        }\n\3',
+                           content, flags=re.DOTALL)
+          with open('app/build.gradle', 'w') as f:
+              f.write(content)
+          "
 
           # 6. 精简 Kotlin/Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
