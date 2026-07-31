@@ -23,7 +23,7 @@ jobs:
 
       - name: Create missing C header and clean Kotlin source
         run: |
-          # 1. 生成兼容的 alvr_client_core.h (PhoneVR 的 C++ 代码需要这些声明)
+          # 1. 生成兼容的 alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
           #ifndef ALVR_CLIENT_CORE_H
@@ -75,7 +75,7 @@ jobs:
           #endif
           HEADER_EOF
 
-          # 2. 覆盖 OdyxEngineWrapper.kt 为精简版（通过 Spotless 格式检查）
+          # 2. 覆盖 OdyxEngineWrapper.kt 为精简版
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
@@ -103,7 +103,7 @@ jobs:
           }
           KOTLIN_EOF
 
-          # 3. 创建 NativeBridge.java (无BOM)
+          # 3. 创建 NativeBridge.java
           cat > app/src/odyx/java/com/alvr/odyx/NativeBridge.java << 'JAVA_EOF'
           package com.alvr.odyx;
 
@@ -113,7 +113,7 @@ jobs:
           }
           JAVA_EOF
 
-          # 4. 删除可能残留的 OdyxVRApplication.kt
+          # 4. 删除 OdyxVRApplication.kt
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
       - name: Fix app/build.gradle
@@ -126,10 +126,14 @@ jobs:
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
       - name: Auto-format code (Spotless)
-        run: ./gradlew :app:spotlessApply --no-daemon
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:spotlessApply --no-daemon
 
       - name: Build debug APK
-        run: ./gradlew assembleNoGvrDebug --no-daemon
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleNoGvrDebug --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
