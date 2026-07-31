@@ -21,18 +21,73 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Download real ALVR library and create all missing files
+      - name: Create missing headers and fix Gradle config
         run: |
-          # 1. 从 PhoneVR 官方 APK 提取 libalvr_client_core.so
-          mkdir -p ALVR/build/alvr_client_core/arm64-v8a
-          curl -L -o /tmp/pvr.apk "https://github.com/Viritualis/PhoneVR/releases/download/v2.3.1/PhoneVR-v2.3.1.apk"
-          unzip -j /tmp/pvr.apk "lib/arm64-v8a/libalvr_client_core.so" -d ALVR/build/alvr_client_core/arm64-v8a/
+          # 1. alvr_client_core.h
+          mkdir -p ALVR/build/alvr_client_core
+          cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
+          #ifndef ALVR_CLIENT_CORE_H
+          #define ALVR_CLIENT_CORE_H
+          #include <stdint.h>
+          #include <stdbool.h>
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          typedef enum { ALVR_LOG_LEVEL_DEBUG, ALVR_LOG_LEVEL_INFO, ALVR_LOG_LEVEL_WARN, ALVR_LOG_LEVEL_ERROR } AlvrLogLevel;
+          typedef struct { float x, y, z, w; } AlvrQuat;
+          typedef struct { float orientation[4]; float position[3]; } AlvrPose;
+          typedef struct {
+              float position[3], orientation[4], linear_velocity[3], angular_velocity[3];
+              uint64_t device_id;
+              AlvrPose pose;
+          } AlvrDeviceMotion;
+          typedef struct { float left, right, up, down; } AlvrFov;
+          typedef struct { float fov[4]; AlvrPose pose; } AlvrViewParams;
+          typedef struct { int width, height, format, length; unsigned char *data; uint64_t timestamp; } AlvrStreamedFrame;
+          typedef enum { ALVR_EVENT_HUD_MESSAGE_UPDATED, ALVR_EVENT_STREAMING_STARTED, ALVR_EVENT_STREAMING_STOPPED } AlvrEventTag;
+          typedef struct { AlvrEventTag tag; union { struct { int view_width, view_height; } STREAMING_STARTED; }; } AlvrEvent;
+          typedef struct { int view_resolution_width, view_resolution_height; int swapchain_length; const uint32_t **swapchain_textures; bool enable_foveation; float foveation_center_size_x, foveation_center_size_y, foveation_center_shift_x, foveation_center_shift_y, foveation_edge_ratio_x, foveation_edge_ratio_y; } AlvrStreamConfig;
+          typedef struct { AlvrPose pose; AlvrFov fov; int swapchain_index; } AlvrViewInput;
+          typedef struct {
+              int default_view_width, default_view_height;
+              bool external_decoder;
+              float* refresh_rates;
+              int refresh_rates_count;
+              bool foveated_encoding;
+              bool encoder_high_profile;
+              bool encoder_10_bits;
+              bool encoder_av1;
+          } AlvrClientCapabilities;
+          void alvr_log(AlvrLogLevel level, const char* msg);
+          void* alvr_initialize(AlvrClientCapabilities caps);
+          void alvr_destroy(void);
+          void alvr_initialize_opengl(void);
+          void alvr_destroy_opengl(void);
+          void alvr_resume(void);
+          void alvr_pause(void);
+          void alvr_pause_opengl(void);
+          void alvr_resume_opengl(int w, int h, const uint32_t* textures[2], int count, bool foveated);
+          void alvr_send_tracking(uint64_t timestamp, AlvrViewParams* views, AlvrDeviceMotion* head, int view_count, AlvrFov* fovs, void* extra);
+          int64_t alvr_get_frame(AlvrViewParams* params, void** buffer);
+          void alvr_render_stream_opengl(void* buffer, uint32_t* swapchain_indices);
+          void alvr_start_stream_opengl(AlvrStreamConfig config);
+          void alvr_report_submit(uint64_t timestamp, int index);
+          void alvr_render_lobby_opengl(AlvrViewInput* inputs);
+          void alvr_update_hud_message_opengl(const char* msg);
+          bool alvr_poll_event(AlvrEvent* event);
+          int alvr_hud_message(char* buffer);
+          uint64_t alvr_path_string_to_id(const char* path);
+          int64_t alvr_get_head_prediction_offset_ns(void);
+          void alvr_send_battery(uint64_t id, float level, bool plugged);
+          int alvr_get_settings_json(char* buffer);
+          void alvr_initialize_android_context(void* vm, void* context);
+          #ifdef __cplusplus
+          }
+          #endif
+          #endif
+          HEADER_EOF
 
-          # 2. 其他占位库（Cardboard 等）
-          mkdir -p app/libraries/jni/arm64-v8a
-          touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
-
-          # 3. json.hpp
+          # 2. json.hpp
           mkdir -p cardboard/nlohmann
           cat > cardboard/nlohmann/json.hpp << 'JSON_EOF'
           #ifndef NLOHMANN_JSON_HPP
@@ -115,367 +170,17 @@ jobs:
           #endif
           JSON_EOF
 
-          # 4. 最终版 alvr_main.cpp（之前已通过编译的版本）
-          cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
-          #include "alvr_client_core.h"
-          #include <GLES3/gl3.h>
-          #include <algorithm>
-          #include <android/log.h>
-          #include <deque>
-          #include <jni.h>
-          #include <map>
-          #include <thread>
-          #include <unistd.h>
-          #include <vector>
+          # 3. 清理 Gradle 配置
+          sed -i "/com.google.gms.google-services/d" app/build.gradle
+          sed -i "/firebase/d" app/build.gradle
+          sed -i "/cardboard/d" app/build.gradle
+          sed -i "/gvrImplementation/d" app/build.gradle
+          sed -i "/io.github.zxing-cpp/d" app/build.gradle
+          sed -i "/flatDir {/,/}/d" app/build.gradle
+          sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
+          sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          #include "nlohmann/json.hpp"
-          #include "utils.h"
-
-          using namespace nlohmann;
-
-          uint64_t HEAD_ID = alvr_path_string_to_id("/user/head");
-          const float FLOOR_HEIGHT = 1.5;
-
-          JavaVM *g_vm = nullptr;
-
-          JNIEnv *getEnv() {
-              JNIEnv *env = nullptr;
-              if (g_vm->GetEnv((void **)&env, JNI_VERSION_1_6) == JNI_EDETACHED)
-                  g_vm->AttachCurrentThread(&env, nullptr);
-              return env;
-          }
-
-          struct OdyxBridge {
-              jclass wrapperClass = nullptr;
-              jmethodID getPoseMethod = nullptr;
-              jmethodID initMethod = nullptr;
-              bool initialized = false;
-          };
-
-          OdyxBridge ODYX;
-
-          void initOdyx(JNIEnv *env, jobject context) {
-              if (ODYX.initialized) return;
-              jclass cls = env->FindClass("com/alvr/odyx/OdyxEngineWrapper");
-              if (!cls) {
-                  __android_log_print(ANDROID_LOG_ERROR, "OdyxVR", "OdyxEngineWrapper class not found!");
-                  return;
-              }
-              ODYX.wrapperClass = (jclass)env->NewGlobalRef(cls);
-              ODYX.initMethod = env->GetStaticMethodID(cls, "init", "(Landroid/content/Context;)V");
-              ODYX.getPoseMethod = env->GetStaticMethodID(cls, "getPose", "()[F");
-              if (!ODYX.initMethod || !ODYX.getPoseMethod) {
-                  __android_log_print(ANDROID_LOG_ERROR, "OdyxVR", "OdyxEngineWrapper methods not found!");
-                  return;
-              }
-              env->CallStaticVoidMethod(cls, ODYX.initMethod, context);
-              ODYX.initialized = true;
-              __android_log_print(ANDROID_LOG_INFO, "OdyxVR", "ODYX 6DoF engine initialized");
-          }
-
-          AlvrPose getOdyxPose() {
-              AlvrPose pose;
-              pose.orientation[0] = 0.0f; pose.orientation[1] = 0.0f;
-              pose.orientation[2] = 0.0f; pose.orientation[3] = 1.0f;
-              pose.position[0] = 0.0f; pose.position[1] = 0.0f; pose.position[2] = 0.0f;
-
-              if (!ODYX.initialized) return pose;
-
-              JNIEnv *env = getEnv();
-              if (!env) return pose;
-
-              jfloatArray arr = (jfloatArray)env->CallStaticObjectMethod(ODYX.wrapperClass, ODYX.getPoseMethod);
-              if (!arr) return pose;
-
-              jfloat *elems = env->GetFloatArrayElements(arr, nullptr);
-              if (elems && env->GetArrayLength(arr) >= 7) {
-                  float x = elems[0], y = elems[1], z = elems[2];
-                  float qx = elems[3], qy = elems[4], qz = elems[5], qw = elems[6];
-
-                  const float sqrt2_2 = 0.70710678f;
-                  float rw = sqrt2_2, rx = -sqrt2_2;
-                  pose.position[0] = x;
-                  pose.position[1] = z;
-                  pose.position[2] = -y;
-                  pose.orientation[0] = rw * qx + rx * qw;
-                  pose.orientation[1] = rw * qy - rx * qz;
-                  pose.orientation[2] = rw * qz + rx * qy;
-                  pose.orientation[3] = rw * qw - rx * qx;
-
-                  env->ReleaseFloatArrayElements(arr, elems, JNI_ABORT);
-              }
-              return pose;
-          }
-
-          struct NativeContext {
-              JavaVM *javaVm = nullptr;
-              jobject javaContext = nullptr;
-              int screenWidth = 0, screenHeight = 0;
-              bool renderingParamsChanged = true;
-              bool glContextRecreated = false;
-              bool running = false;
-              bool streaming = false;
-              std::thread inputThread;
-              GLuint lobbyTextures[2] = {0, 0};
-              GLuint streamTextures[2] = {0, 0};
-              float eyeOffsets[2] = {0.0f, 0.0f};
-              AlvrFov fovArr[2] = {};
-              AlvrViewParams viewParams[2] = {};
-              AlvrDeviceMotion deviceMotion = {};
-              NativeContext() {
-                  memset(&fovArr, 0, sizeof(fovArr));
-                  memset(&viewParams, 0, sizeof(viewParams));
-                  memset(&deviceMotion, 0, sizeof(deviceMotion));
-              }
-          };
-
-          NativeContext CTX;
-
-          int64_t GetBootTimeNano() {
-              struct timespec res = {};
-              clock_gettime(CLOCK_BOOTTIME, &res);
-              return (res.tv_sec * 1e9) + res.tv_nsec;
-          }
-
-          AlvrQuat inverseQuat(AlvrQuat q) { return {-q.x, -q.y, -q.z, q.w}; }
-
-          void cross(float a[3], float b[3], float out[3]) {
-              out[0] = a[1] * b[2] - a[2] * b[1];
-              out[1] = a[2] * b[0] - a[0] * b[2];
-              out[2] = a[0] * b[1] - a[1] * b[0];
-          }
-
-          void quatVecMultiply(AlvrQuat q, float v[3], float out[3]) {
-              float rv[3], rrv[3];
-              float r[3] = {q.x, q.y, q.z};
-              cross(r, v, rv);
-              cross(r, rv, rrv);
-              for (int i = 0; i < 3; i++)
-                  out[i] = v[i] + 2 * (q.w * rv[i] + rrv[i]);
-          }
-
-          void offsetPosWithQuat(float q[4], float offset[3], float outPos[3]) {
-              AlvrQuat quat = {q[0], q[1], q[2], q[3]};
-              float rotatedOffset[3];
-              quatVecMultiply(quat, offset, rotatedOffset);
-              outPos[0] -= rotatedOffset[0];
-              outPos[1] -= rotatedOffset[1] - FLOOR_HEIGHT;
-              outPos[2] -= rotatedOffset[2];
-          }
-
-          AlvrFov getFov(int eye) {
-              (void)eye;
-              AlvrFov fov = {};
-              fov.left = -0.7f;
-              fov.right = 0.7f;
-              fov.up = 0.7f;
-              fov.down = -0.7f;
-              return fov;
-          }
-
-          void updateViewConfigs(uint64_t targetTimestampNs = 0) {
-              if (!targetTimestampNs)
-                  targetTimestampNs = GetBootTimeNano() + alvr_get_head_prediction_offset_ns();
-              AlvrPose headPose = getOdyxPose();
-              CTX.deviceMotion.device_id = HEAD_ID;
-              CTX.deviceMotion.pose = headPose;
-
-              float headToEye[3] = {CTX.eyeOffsets[0], 0.0f, 0.0f};
-              CTX.viewParams[0].pose = headPose;
-              offsetPosWithQuat(headPose.orientation, headToEye, CTX.viewParams[0].pose.position);
-              memcpy(&CTX.viewParams[0].fov, &CTX.fovArr[0], sizeof(AlvrFov));
-
-              headToEye[0] = CTX.eyeOffsets[1];
-              CTX.viewParams[1].pose = headPose;
-              offsetPosWithQuat(headPose.orientation, headToEye, CTX.viewParams[1].pose.position);
-              memcpy(&CTX.viewParams[1].fov, &CTX.fovArr[1], sizeof(AlvrFov));
-          }
-
-          void inputThread() {
-              auto deadline = std::chrono::steady_clock::now();
-              while (CTX.streaming) {
-                  auto targetTimestampNs = GetBootTimeNano() + alvr_get_head_prediction_offset_ns();
-                  updateViewConfigs(targetTimestampNs);
-                  alvr_send_tracking(targetTimestampNs, CTX.viewParams, &CTX.deviceMotion, 1, nullptr, nullptr);
-                  deadline += std::chrono::nanoseconds((uint64_t)(1e9 / 60.f / 3));
-                  std::this_thread::sleep_until(deadline);
-              }
-          }
-
-          extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM *vm, void *) {
-              g_vm = vm;
-              CTX.javaVm = vm;
-              return JNI_VERSION_1_6;
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_initializeNative(JNIEnv *env, jobject obj, jint screenWidth, jint screenHeight, jfloat refreshRate) {
-              CTX.javaContext = env->NewGlobalRef(obj);
-              initOdyx(env, obj);
-
-              uint32_t viewWidth = std::max(screenWidth, screenHeight) / 2;
-              uint32_t viewHeight = std::min(screenWidth, screenHeight);
-              alvr_initialize_android_context((void *)CTX.javaVm, (void *)CTX.javaContext);
-              float refreshRatesBuffer[1] = {refreshRate};
-              AlvrClientCapabilities caps = {};
-              caps.default_view_height = viewHeight;
-              caps.default_view_width = viewWidth;
-              caps.external_decoder = false;
-              caps.refresh_rates = refreshRatesBuffer;
-              caps.refresh_rates_count = 1;
-              caps.foveated_encoding = true;
-              caps.encoder_high_profile = true;
-              caps.encoder_10_bits = true;
-              caps.encoder_av1 = true;
-              alvr_initialize(caps);
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_destroyNative(JNIEnv *, jobject) {
-              alvr_destroy_opengl();
-              alvr_destroy();
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_resumeNative(JNIEnv *, jobject) {
-              CTX.renderingParamsChanged = true;
-              CTX.fovArr[0] = getFov(0);
-              CTX.fovArr[1] = getFov(1);
-              CTX.eyeOffsets[0] = -0.032f;
-              CTX.eyeOffsets[1] = 0.032f;
-              CTX.running = true;
-              alvr_resume();
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_pauseNative(JNIEnv *, jobject) {
-              alvr_pause();
-              CTX.running = false;
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_surfaceCreatedNative(JNIEnv *, jobject) {
-              alvr_initialize_opengl();
-              CTX.glContextRecreated = true;
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_setScreenResolutionNative(JNIEnv *, jobject, jint width, jint height) {
-              CTX.screenWidth = width;
-              CTX.screenHeight = height;
-              CTX.renderingParamsChanged = true;
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_sendBatteryLevel(JNIEnv *, jobject, jfloat level, jboolean plugged) {
-              alvr_send_battery(HEAD_ID, level, plugged);
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_renderNative(JNIEnv *, jobject) {
-              try {
-                  if (CTX.renderingParamsChanged) {
-                      __android_log_print(ANDROID_LOG_INFO, "OdyxVR", "renderingParamsChanged, using default params");
-                      CTX.fovArr[0] = getFov(0);
-                      CTX.fovArr[1] = getFov(1);
-                      CTX.eyeOffsets[0] = -0.032f;
-                      CTX.eyeOffsets[1] = 0.032f;
-                      CTX.renderingParamsChanged = false;
-                      CTX.glContextRecreated = false;
-                  }
-                  if (CTX.renderingParamsChanged && !CTX.glContextRecreated) {
-                      alvr_pause_opengl();
-                      GL(glDeleteTextures(2, CTX.lobbyTextures));
-                  }
-                  if (CTX.renderingParamsChanged || CTX.glContextRecreated) {
-                      GL(glGenTextures(2, CTX.lobbyTextures));
-                      for (auto &lobbyTexture : CTX.lobbyTextures) {
-                          GL(glBindTexture(GL_TEXTURE_2D, lobbyTexture));
-                          GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-                          GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-                          GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-                          GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-                          GL(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, CTX.screenWidth / 2, CTX.screenHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr));
-                      }
-                      const uint32_t *targetViews[2] = {(uint32_t *)&CTX.lobbyTextures[0], (uint32_t *)&CTX.lobbyTextures[1]};
-                      alvr_resume_opengl(CTX.screenWidth / 2, CTX.screenHeight, targetViews, 1, true);
-                      CTX.renderingParamsChanged = false;
-                      CTX.glContextRecreated = false;
-                  }
-                  AlvrEvent event;
-                  while (alvr_poll_event(&event)) {
-                      if (event.tag == ALVR_EVENT_HUD_MESSAGE_UPDATED) {
-                          auto message_length = alvr_hud_message(nullptr);
-                          auto message_buffer = std::vector<char>(message_length);
-                          alvr_hud_message(&message_buffer[0]);
-                          if (message_length > 0)
-                              alvr_update_hud_message_opengl(&message_buffer[0]);
-                      }
-                      if (event.tag == ALVR_EVENT_STREAMING_STARTED) {
-                          auto config = event.STREAMING_STARTED;
-                          auto settings_len = alvr_get_settings_json(nullptr);
-                          auto settings_buffer = std::vector<char>(settings_len);
-                          alvr_get_settings_json(&settings_buffer[0]);
-                          json settings_json = json::parse(&settings_buffer[0]);
-                          GL(glGenTextures(2, CTX.streamTextures));
-                          for (auto &streamTexture : CTX.streamTextures) {
-                              GL(glBindTexture(GL_TEXTURE_2D, streamTexture));
-                              GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-                              GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-                              GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-                              GL(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-                              GL(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, config.view_width, config.view_height, 0, GL_RGB, GL_UNSIGNED_BYTE, nullptr));
-                          }
-                          CTX.fovArr[0] = getFov(0);
-                          CTX.fovArr[1] = getFov(1);
-                          auto leftIntHandle = (uint32_t)CTX.streamTextures[0];
-                          auto rightIntHandle = (uint32_t)CTX.streamTextures[1];
-                          const uint32_t *textureHandles[2] = {&leftIntHandle, &rightIntHandle};
-                          AlvrStreamConfig render_config = {};
-                          render_config.view_resolution_width = config.view_width;
-                          render_config.view_resolution_height = config.view_height;
-                          render_config.swapchain_textures = textureHandles;
-                          render_config.swapchain_length = 1;
-                          render_config.enable_foveation = false;
-                          alvr_start_stream_opengl(render_config);
-                          CTX.streaming = true;
-                          CTX.inputThread = std::thread(inputThread);
-                      } else if (event.tag == ALVR_EVENT_STREAMING_STOPPED) {
-                          CTX.streaming = false;
-                          CTX.inputThread.join();
-                          GL(glDeleteTextures(2, CTX.streamTextures));
-                      }
-                  }
-                  if (CTX.streaming) {
-                      void *streamHardwareBuffer = nullptr;
-                      AlvrViewParams dummyViewParams;
-                      auto timestampNs = alvr_get_frame(&dummyViewParams, &streamHardwareBuffer);
-                      if (timestampNs == -1) return;
-                      uint32_t swapchainIndices[2] = {0, 0};
-                      alvr_render_stream_opengl(streamHardwareBuffer, swapchainIndices);
-                      alvr_report_submit(timestampNs, 0);
-                  } else {
-                      AlvrPose pose = getOdyxPose();
-                      AlvrViewInput viewInputs[2] = {};
-                      for (int eye = 0; eye < 2; eye++) {
-                          float headToEye[3] = {CTX.eyeOffsets[eye], 0.0f, 0.0f};
-                          offsetPosWithQuat(pose.orientation, headToEye, viewInputs[eye].pose.position);
-                          memcpy(&viewInputs[eye].pose.orientation, pose.orientation, sizeof(pose.orientation));
-                          viewInputs[eye].fov = getFov(eye);
-                          viewInputs[eye].swapchain_index = 0;
-                      }
-                      alvr_render_lobby_opengl(viewInputs);
-                  }
-              } catch (const std::exception &e) {
-                  __android_log_print(ANDROID_LOG_ERROR, "OdyxVR", "Exception: %s", e.what());
-              }
-          }
-
-          extern "C" JNIEXPORT void JNICALL
-          Java_viritualisres_phonevr_ALVRActivity_switchViewerNative(JNIEnv *, jobject) {}
-          CPP_EOF
-
-          # 5. 精简 Kotlin/Java
+          # 4. 精简 Kotlin/Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
@@ -513,16 +218,6 @@ jobs:
           JAVA_EOF
 
           rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
-
-          # 6. 清理 Gradle 配置
-          sed -i "/com.google.gms.google-services/d" app/build.gradle
-          sed -i "/firebase/d" app/build.gradle
-          sed -i "/cardboard/d" app/build.gradle
-          sed -i "/gvrImplementation/d" app/build.gradle
-          sed -i "/io.github.zxing-cpp/d" app/build.gradle
-          sed -i "/flatDir {/,/}/d" app/build.gradle
-          sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
-          sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
       - name: Auto-format code (Spotless)
         run: |
