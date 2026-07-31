@@ -170,7 +170,7 @@ jobs:
           #endif
           JSON_EOF
 
-          # 3. 用完整正确的 alvr_main.cpp 覆盖仓库中的版本（已修复所有错误）
+          # 3. 用完整正确的 alvr_main.cpp 覆盖仓库中的版本
           cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
           #include "alvr_client_core.h"
           #include <GLES3/gl3.h>
@@ -540,7 +540,10 @@ jobs:
           sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          # 5. 精简 Kotlin/Java
+          # 5. 限制只编译 arm64-v8a，因为我们只提供了该架构的预编译库
+          sed -i "/ndk {/,/}/c\ \ \ \ ndk {\n        abiFilters 'arm64-v8a'\n    }" app/build.gradle
+
+          # 6. 精简 Kotlin/Java
           cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
           /* (C)2026 */
           package com.alvr.odyx
