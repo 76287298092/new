@@ -21,9 +21,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/gradle-build-action@v2
 
-      - name: Create missing headers, placeholder libs, and fix source code
+      - name: Create missing headers, placeholder libs, and fix source code & build.gradle
         run: |
-          # 1. 头文件
+          # 1. 头文件 alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
           #ifndef ALVR_CLIENT_CORE_H
@@ -75,13 +75,13 @@ jobs:
           #endif
           HEADER_EOF
 
-          # 2. 占位库
+          # 2. 占位库文件
           mkdir -p ALVR/build/alvr_client_core/arm64-v8a
           touch ALVR/build/alvr_client_core/arm64-v8a/libalvr_client_core.so
           mkdir -p app/libraries/jni/arm64-v8a
           touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
 
-          # 3. nlohmann/json.hpp
+          # 3. nlohmann/json.hpp 最小实现
           mkdir -p cardboard/nlohmann
           cat > cardboard/nlohmann/json.hpp << 'JSON_EOF'
           #ifndef NLOHMANN_JSON_HPP
@@ -165,149 +165,62 @@ jobs:
           JSON_EOF
 
           # 4. 修复 alvr_main.cpp 中的数组赋值和移除 cardboard.h
-          # 移除 #include "cardboard.h"
           sed -i 's|#include "cardboard.h"|// &|' app/src/main/cpp/alvr_main.cpp
-          # 修复 pose.orientation = {...}
           sed -i 's|pose\.orientation = {0\.0f, 0\.0f, 0\.0f, 1\.0f};|pose.orientation[0]=0.0f; pose.orientation[1]=0.0f; pose.orientation[2]=0.0f; pose.orientation[3]=1.0f;|' app/src/main/cpp/alvr_main.cpp
           sed -i 's|pose\.position = {0\.0f, 0\.0f, 0\.0f};|pose.position[0]=0.0f; pose.position[1]=0.0f; pose.position[2]=0.0f;|' app/src/main/cpp/alvr_main.cpp
           sed -i 's|pose\.position = {x, z, -y};|pose.position[0]=x; pose.position[1]=z; pose.position[2]=-y;|' app/src/main/cpp/alvr_main.cpp
-          sed -i 's|pose\.orientation = {$|pose.orientation[0]=|' app/src/main/cpp/alvr_main.cpp  # 会部分匹配，但需要更精确处理最后那一段四元数赋值
-          # 对于复杂的四元数赋值，直接用更简单的 sed 替换整段
-          sed -i '/pose\.orientation = {/ { :loop; /};/!{N;b loop}; s/pose\.orientation = {/pose.orientation[0]=/; s/,/\n pose.orientation[1]=/; s/,/\n pose.orientation[2]=/; s/,/\n pose.orientation[3]=/; s/};/;/; }' app/src/main/cpp/alvr_main.cpp
-          # 上面的 sed 可能不够完美，但至少要保证编译通过，我们还可以直接删除有问题的块后用新的函数代替，不过风险大。最稳妥是替换整个 alvr_main.cpp 为我们提供的完整修正版。
-          # 实际上，我们曾提供过完整修正版 alvr_main.cpp，现在直接将仓库中的替换掉！
-          cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
-          #include "alvr_client_core.h"
-          #include <GLES3/gl3.h>
-          #include <algorithm>
-          #include <android/log.h>
-          #include <deque>
-          #include <jni.h>
-          #include <map>
-          #include <thread>
-          #include <unistd.h>
-          #include <vector>
+          # 处理多行四元数赋值（如果有）
+          sed -i '/pose\.orientation = {/,/};/ s/pose\.orientation = {/pose.orientation[0]=/; s/,/;\npose.orientation[1]=/; s/,/;\npose.orientation[2]=/; s/,/;\npose.orientation[3]=/; s/};/;/' app/src/main/cpp/alvr_main.cpp || true
 
-          #include "nlohmann/json.hpp"
-          #include "utils.h"
+          # 5. 精简版 Kotlin 和 Java
+          cat > app/src/odyx/java/com/alvr/odyx/OdyxEngineWrapper.kt << 'KOTLIN_EOF'
+          /* (C)2026 */
+          package com.alvr.odyx
 
-          // ==========================================================================
-          // ODYX 6DoF + PhoneVR :: 普通手机 → PC VR 显示器
-          // ==========================================================================
-
-          using namespace nlohmann;
-
-          uint64_t HEAD_ID = alvr_path_string_to_id("/user/head");
-          const float FLOOR_HEIGHT = 1.5;
-          const int MAXIMUM_TRACKING_FRAMES = 360;
-
-          JavaVM *g_vm = nullptr;
-          JNIEnv *getEnv() {
-              JNIEnv *env = nullptr;
-              if (g_vm->GetEnv((void **)&env, JNI_VERSION_1_6) == JNI_EDETACHED)
-                  g_vm->AttachCurrentThread(&env, nullptr);
-              return env;
-          }
-
-          struct OdyxBridge {
-              jclass wrapperClass = nullptr;
-              jmethodID getPoseMethod = nullptr;
-              jmethodID initMethod = nullptr;
-              bool initialized = false;
-          };
-          OdyxBridge ODYX = {};
-
-          void initOdyx(JNIEnv *env, jobject context) {
-              if (ODYX.initialized) return;
-              jclass cls = env->FindClass("com/alvr/odyx/OdyxEngineWrapper");
-              if (!cls) { __android_log_print(ANDROID_LOG_ERROR, "OdyxVR", "class not found"); return; }
-              ODYX.wrapperClass = (jclass)env->NewGlobalRef(cls);
-              ODYX.initMethod = env->GetStaticMethodID(cls, "init", "(Landroid/content/Context;)V");
-              ODYX.getPoseMethod = env->GetStaticMethodID(cls, "getPose", "()[F");
-              if (!ODYX.initMethod || !ODYX.getPoseMethod) return;
-              env->CallStaticVoidMethod(cls, ODYX.initMethod, context);
-              ODYX.initialized = true;
-          }
-
-          AlvrPose getOdyxPose() {
-              AlvrPose pose = {};
-              pose.orientation[0] = 0.0f; pose.orientation[1] = 0.0f;
-              pose.orientation[2] = 0.0f; pose.orientation[3] = 1.0f;
-              pose.position[0] = 0.0f; pose.position[1] = 0.0f; pose.position[2] = 0.0f;
-              if (!ODYX.initialized) return pose;
-              JNIEnv *env = getEnv();
-              if (!env) return pose;
-              jfloatArray arr = (jfloatArray)env->CallStaticObjectMethod(ODYX.wrapperClass, ODYX.getPoseMethod);
-              if (!arr) return pose;
-              jfloat *elems = env->GetFloatArrayElements(arr, nullptr);
-              if (elems && env->GetArrayLength(arr) >= 7) {
-                  float x = elems[0], y = elems[1], z = elems[2];
-                  float qx = elems[3], qy = elems[4], qz = elems[5], qw = elems[6];
-                  const float sqrt2_2 = 0.70710678f;
-                  float rw = sqrt2_2, rx = -sqrt2_2;
-                  pose.position[0] = x; pose.position[1] = z; pose.position[2] = -y;
-                  pose.orientation[0] = rw*qx + rx*qw;
-                  pose.orientation[1] = rw*qy - rx*qz;
-                  pose.orientation[2] = rw*qz + rx*qy;
-                  pose.orientation[3] = rw*qw - rx*qx;
-                  env->ReleaseFloatArrayElements(arr, elems, JNI_ABORT);
+          object OdyxEngineWrapper {
+              @JvmStatic
+              fun getPose(): FloatArray {
+                  val handle = 0L
+                  val input = DoubleArray(26)
+                  val output = NativeBridge.nativeGetPose(handle, input)
+                  return if (output != null && output.size >= 8) {
+                      floatArrayOf(
+                          output[6].toFloat(),
+                          output[7].toFloat(),
+                          output[8].toFloat(),
+                          output[2].toFloat(),
+                          output[3].toFloat(),
+                          output[4].toFloat(),
+                          output[5].toFloat()
+                      )
+                  } else {
+                      floatArrayOf(0f, 0f, 0f, 0f, 0f, 0f, 1f)
+                  }
               }
-              return pose;
           }
+          KOTLIN_EOF
 
-          struct NativeContext {
-              JavaVM *javaVm = nullptr;
-              jobject javaContext = nullptr;
-              int screenWidth = 0, screenHeight = 0;
-              bool renderingParamsChanged = true, glContextRecreated = false, running = false, streaming = false;
-              std::thread inputThread;
-              GLuint lobbyTextures[2] = {0,0}, streamTextures[2] = {0,0};
-              float eyeOffsets[2] = {0.0f, 0.0f};
-              AlvrFov fovArr[2] = {};
-              AlvrViewParams viewParams[2] = {};
-              AlvrDeviceMotion deviceMotion = {};
-              NativeContext() { memset(&fovArr,0,sizeof(fovArr)); memset(&viewParams,0,sizeof(viewParams)); memset(&deviceMotion,0,sizeof(deviceMotion)); }
-          } CTX;
+          cat > app/src/odyx/java/com/alvr/odyx/NativeBridge.java << 'JAVA_EOF'
+          package com.alvr.odyx;
 
-          int64_t GetBootTimeNano() { struct timespec res={}; clock_gettime(CLOCK_BOOTTIME,&res); return (res.tv_sec*1e9)+res.tv_nsec; }
-          AlvrQuat inverseQuat(AlvrQuat q) { return {-q.x,-q.y,-q.z,q.w}; }
-          void cross(float a[3], float b[3], float out[3]) { out[0]=a[1]*b[2]-a[2]*b[1]; out[1]=a[2]*b[0]-a[0]*b[2]; out[2]=a[0]*b[1]-a[1]*b[0]; }
-          void quatVecMultiply(AlvrQuat q, float v[3], float out[3]) { float rv[3],rrv[3]; float r[3]={q.x,q.y,q.z}; cross(r,v,rv); cross(r,rv,rrv); for(int i=0;i<3;i++) out[i]=v[i]+2*(q.w*rv[i]+rrv[i]); }
-          void offsetPosWithQuat(AlvrQuat q, float offset[3], float outPos[3]) { float rotatedOffset[3]; quatVecMultiply(q,offset,rotatedOffset); outPos[0]-=rotatedOffset[0]; outPos[1]-=rotatedOffset[1]-FLOOR_HEIGHT; outPos[2]-=rotatedOffset[2]; }
-          AlvrFov getFov(int eye) { (void)eye; AlvrFov fov={}; fov.left=-0.7f; fov.right=0.7f; fov.up=0.7f; fov.down=-0.7f; return fov; }
-
-          void updateViewConfigs(uint64_t targetTimestampNs = 0) {
-              if (!targetTimestampNs) targetTimestampNs = GetBootTimeNano() + alvr_get_head_prediction_offset_ns();
-              AlvrPose headPose = getOdyxPose();
-              CTX.deviceMotion.device_id = HEAD_ID;
-              CTX.deviceMotion.pose = headPose;
-              float headToEye[3] = {CTX.eyeOffsets[0], 0.0f, 0.0f};
-              CTX.viewParams[0].pose = headPose;
-              offsetPosWithQuat(headPose.orientation, headToEye, CTX.viewParams[0].pose.position);
-              CTX.viewParams[0].fov = CTX.fovArr[0];
-              headToEye[0] = CTX.eyeOffsets[1];
-              CTX.viewParams[1].pose = headPose;
-              offsetPosWithQuat(headPose.orientation, headToEye, CTX.viewParams[1].pose.position);
-              CTX.viewParams[1].fov = CTX.fovArr[1];
+          public class NativeBridge {
+              static { System.loadLibrary("odyx"); }
+              public static native double[] nativeGetPose(long handle, double[] input);
           }
+          JAVA_EOF
 
-          void inputThread() { /* ... 保持原样，但太长，我们保留关键部分 */ }
-          // 由于字符限制，我们直接保留 inputThread 的实现，但必须完整。实际上之前的版本就有 inputThread 定义，我们无需重写，只需要保证前面的函数正确。
-          // 但为了简洁，我们在此只覆盖报错的部分，其余不动。所以 sed 修复更好。
-          CPP_EOF
-          # 上面的 CPP_EOF 会覆盖整个文件，但 inputThread 和后面的大量代码会丢失，因此我们改用 sed 精准修复，而不是整体覆盖。
-          # 所以我们回退，只做 sed 修复，不再整体覆盖。
+          rm -f app/src/odyx/java/com/alvr/odyx/OdyxVRApplication.kt
 
-      - name: Fix source code (array assignments & cardboard.h)
-        run: |
-          # 移除 #include "cardboard.h"
-          sed -i 's|#include "cardboard.h"|// &|' app/src/main/cpp/alvr_main.cpp
-          # 修复数组赋值
-          sed -i 's|pose\.orientation = {0\.0f, 0\.0f, 0\.0f, 1\.0f};|pose.orientation[0]=0.0f; pose.orientation[1]=0.0f; pose.orientation[2]=0.0f; pose.orientation[3]=1.0f;|' app/src/main/cpp/alvr_main.cpp
-          sed -i 's|pose\.position = {0\.0f, 0\.0f, 0\.0f};|pose.position[0]=0.0f; pose.position[1]=0.0f; pose.position[2]=0.0f;|' app/src/main/cpp/alvr_main.cpp
-          sed -i 's|pose\.position = {x, z, -y};|pose.position[0]=x; pose.position[1]=z; pose.position[2]=-y;|' app/src/main/cpp/alvr_main.cpp
-          sed -i 's|pose\.orientation = { *\n *|pose.orientation[0]=|' app/src/main/cpp/alvr_main.cpp || true
-          # 如果多行四元数赋值未能完全匹配，可再用一个更通用的 sed 块处理
+          # 6. 彻底清理 app/build.gradle 中的本地 Cardboard 引用和 flatDir
+          sed -i '/cardboard-sdk\.aar/d' app/build.gradle
+          sed -i '/cardboard/d' app/build.gradle   # 删除所有含 cardboard 的行
+          sed -i '/flatDir {/,/}/d' app/build.gradle
+          sed -i "/com.google.gms.google-services/d" app/build.gradle
+          sed -i "/firebase/d" app/build.gradle
+          sed -i "/gvrImplementation/d" app/build.gradle
+          sed -i "/io.github.zxing-cpp/d" app/build.gradle
+          sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
+          sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
       - name: Auto-format code (Spotless)
         run: |
