@@ -530,7 +530,7 @@ jobs:
           Java_viritualisres_phonevr_ALVRActivity_switchViewerNative(JNIEnv *, jobject) {}
           CPP_EOF
 
-          # 4. 处理 app/libraries/jni：删除真实库以避免打包重复，创建占位文件供 CMake 链接
+          # 4. 处理 app/libraries/jni：删除真实库，创建占位文件供 CMake 链接
           mkdir -p app/libraries/jni/arm64-v8a
           rm -f app/libraries/jni/arm64-v8a/*.so
           touch app/libraries/jni/arm64-v8a/libGfxPluginCardboard.so
@@ -538,7 +538,7 @@ jobs:
           touch app/libraries/jni/arm64-v8a/libgvr_audio.so
           touch app/libraries/jni/arm64-v8a/libnative-lib-gvr.so
 
-          # 5. 修改 CMakeLists.txt，注释掉不需要的库链接（防止符号缺失）
+          # 5. 修改 CMakeLists.txt，注释掉不需要的库链接
           sed -i '/libGfxPluginCardboard\|libgvr\|libnative-lib-gvr/s/^/#/' app/CMakeLists.txt
 
           # 6. 清理 Gradle 配置
@@ -551,19 +551,24 @@ jobs:
           sed -i "s/^preBuild.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
           sed -i "s/^build.dependsOn(buildClientLib)/\/\/ &/" app/build.gradle
 
-          # 7. 限制只编译 arm64-v8a 架构
+          # 7. 限制只编译 arm64-v8a 并清空 jniLibs 源集以彻底避免重复
           python3 -c "
           import re
           with open('app/build.gradle', 'r') as f:
               content = f.read()
+          # 删除已有的 ndk 块
           content = re.sub(r'ndk\s*{[^}]*}', '', content, flags=re.DOTALL)
+          # 在 defaultConfig 中插入 ndk
           content = re.sub(r'(defaultConfig\s*{)([^}]*)(})',
                            r'\1\2\n        ndk {\n            abiFilters \"arm64-v8a\"\n        }\n\3',
                            content, flags=re.DOTALL)
-          # 确保 jniLibs 源集不包含重复路径
+          # 移除所有 jniLibs.srcDirs 设置，并设置为空数组
           content = re.sub(r'(jniLibs\.srcDirs\s*=\s*\[[^\]]*\])', r'// \1', content)
           content = re.sub(r'(jniLibs\.srcDirs\s*\+=?\s*\[[^\]]*\])', r'// \1', content)
-          content = content.replace('sourceSets {', 'sourceSets {\n        main {\n            jniLibs.srcDirs = [\"src/main/jniLibs\", \"src/odyx/libs\"]\n        }')
+          # 在 sourceSets 中设置 main 的 jniLibs.srcDirs 为空
+          content = re.sub(r'(sourceSets\s*{)',
+                           r'\1\n        main {\n            jniLibs.srcDirs = []\n        }',
+                           content, flags=re.DOTALL)
           with open('app/build.gradle', 'w') as f:
               f.write(content)
           "
