@@ -23,7 +23,7 @@ jobs:
 
       - name: Prepare headers, fix CMake, clean native libs
         run: |
-          # 1. 头文件 alvr_client_core.h
+          # 1. alvr_client_core.h
           mkdir -p ALVR/build/alvr_client_core
           cat > ALVR/build/alvr_client_core/alvr_client_core.h << 'HEADER_EOF'
           #ifndef ALVR_CLIENT_CORE_H
@@ -170,7 +170,7 @@ jobs:
           #endif
           JSON_EOF
 
-          # 3. 覆盖 alvr_main.cpp（已修复所有错误）
+          # 3. 覆盖正确的 alvr_main.cpp
           cat > app/src/main/cpp/alvr_main.cpp << 'CPP_EOF'
           #include "alvr_client_core.h"
           #include <GLES3/gl3.h>
@@ -530,14 +530,12 @@ jobs:
           Java_viritualisres_phonevr_ALVRActivity_switchViewerNative(JNIEnv *, jobject) {}
           CPP_EOF
 
-          # 4. 修改 CMakeLists.txt：注释掉不需要的库链接，仅保留核心
+          # 4. 修改 CMakeLists.txt（注释掉不需要的库链接）
           sed -i '/libGfxPluginCardboard\|libgvr\|libnative-lib-gvr/s/^/#/' app/CMakeLists.txt
-          # 确保 libalvr_client_core.so 存在（已上传到仓库中，无需复制）
 
-          # 5. 清理可能冲突的目录和文件
+          # 5. 清理冲突目录和多余 .so
           rm -rf app/libraries/jni/arm64-v8a
           mkdir -p app/src/main/jniLibs/arm64-v8a
-          # 删除可能存在的多余 .so 文件（只保留 ODYX 相关）
           rm -f app/src/main/jniLibs/arm64-v8a/libnative-lib-alvr.so
           rm -f app/src/main/jniLibs/arm64-v8a/libnative-lib-gvr.so
           rm -f app/src/main/jniLibs/arm64-v8a/libgvr.so
@@ -564,7 +562,6 @@ jobs:
           content = re.sub(r'(defaultConfig\s*{)([^}]*)(})',
                            r'\1\2\n        ndk {\n            abiFilters \"arm64-v8a\"\n        }\n\3',
                            content, flags=re.DOTALL)
-          # 移除可能残留的 jniLibs.srcDirs 修改
           content = re.sub(r'(jniLibs\.srcDirs\s*=\s*\[[^\]]*\])', r'// \1', content)
           content = re.sub(r'(jniLibs\.srcDirs\s*\+=?\s*\[[^\]]*\])', r'// \1', content)
           with open('app/build.gradle', 'w') as f:
@@ -619,6 +616,11 @@ jobs:
         run: |
           chmod +x ./gradlew
           ./gradlew assembleNoGvrDebug --no-daemon
+
+      - name: List APK files
+        run: |
+          echo "Searching for APK files..."
+          find . -name "*.apk" -type f
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
