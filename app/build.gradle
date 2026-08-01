@@ -105,10 +105,11 @@ android {
     }
     sourceSets {
         main {
-            jniLibs.srcDirs = ["libraries/jni", "../ALVR/build/alvr_client_core"]
+            // 保留默认 src/main/jniLibs，同时追加其它需要的 jniLibs 目录
+            jniLibs.srcDirs += ["libraries/jni", "../ALVR/build/alvr_client_core"]
         }
         gvr {
-            jniLibs.srcDirs = ["libraries/jni", "libraries_gvr/jni", "../ALVR/build/alvr_client_core"]
+            jniLibs.srcDirs += ["libraries/jni", "libraries_gvr/jni", "../ALVR/build/alvr_client_core"]
         }
     }
     externalNativeBuild {
