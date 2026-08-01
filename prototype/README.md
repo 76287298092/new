@@ -1,18 +1,29 @@
-# ALVR VIO Prototype
+## ALVR VIO Prototype (updated)
 
 This directory contains a minimal native VIO (visual-inertial odometry) prototype intended to be integrated into an Android app (ALVR Android client). It's a starting point — a lightweight reference that demonstrates the interfaces, JNI glue, a very small tracker stub and a UDP pose sender. It's not a production VIO implementation.
 
+This branch will attempt to integrate OpenVINS as a more realistic VIO backend. Because OpenVINS has several dependencies and is developed upstream, this prototype uses a third_party fetch approach.
+
 Contents
 - native/: minimal CMake + native sources (Tracker stub, JNI bridge, UDP sender)
+- native/fetch_openvins.sh: script to clone OpenVINS into native/third_party/openvins
 - android/MainActivity.kt: Kotlin example showing Camera2 + SensorManager integration and JNI calls
 - README.md: this file
 
-How to integrate
-1. Add the native CMakeLists.txt into your Android app's CMake build (or create an Android Studio native module). The native module builds a library named `alvr_vio`.
-2. Wire the JNI methods (declared in MainActivity.kt) to call into native code.
-3. From the Activity, push camera frames and IMU samples to native via JNI. The native tracker in this prototype will emit periodic pose packets (UDP) to a configured IP/port.
+Quickstart (with OpenVINS)
+1. Fetch OpenVINS (this clones the upstream repository into prototype/native/third_party/openvins):
+
+   cd prototype/native
+   ./fetch_openvins.sh
+
+2. Build (example with cmake for native library; integrate into Android Studio via externalNativeBuild):
+
+   mkdir -p build && cd build
+   cmake .. -DUSE_OPENVINS=ON -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-28
+   cmake --build . -- -j
+
+3. Integrate the produced library `libalvr_vio.so` into your Android app and wire the JNI calls in MainActivity.kt.
 
 Notes
-- This is a minimal prototype for integration/testing only. Replace the stub tracker with a real VIO (OpenVINS / VINS-Mono / ORB-SLAM3) implementation for production.
-- The UDP sender uses an unencrypted socket; for integration with ALVR you should reuse ALVR's existing transport (encryption, handshake) or extend it to carry pose packets.
-
+- If you don't want to fetch OpenVINS, build with -DUSE_OPENVINS=OFF and the stub tracker will be used (functional for testing integration only).
+- OpenVINS upstream requires Eigen, OpenCV, and other packages; cross-compiling them for Android may require additional steps — the fetch script only clones the sources; manual dependency resolution may be necessary.
