@@ -2,22 +2,33 @@
 // This task will copy any libalvr_client_core.so found under ../ALVR/build/alvr_client_core/<abi>/
 // into app/src/main/jniLibs/<abi>/ so Gradle packages it.
 
-task copyAlvrLibs(type: Copy) {
-    def alvrBuildDir = file('../ALVR/build/alvr_client_core')
-    def destBase = file('src/main/jniLibs')
+// Register the copy task (use register to avoid configuration-time issues)
+val copyAlvrLibs = tasks.register("copyAlvrLibs", Copy::class.java) {
+    val alvrBuildDir = file("../ALVR/build/alvr_client_core")
+    val destBase = file("src/main/jniLibs")
     if (alvrBuildDir.exists()) {
-        alvrBuildDir.eachDir { abiDir ->
-            def soFile = file("${abiDir}/libalvr_client_core.so")
-            if (soFile.exists()) {
-                println "[PVR] Copying ${soFile} -> ${destBase}/${abiDir.name}/"
-                from soFile
-                into "${destBase}/${abiDir.name}"
+        alvrBuildDir.listFiles()?.forEach { abiDir ->
+            if (abiDir.isDirectory) {
+                val soFile = file("${abiDir.path}/libalvr_client_core.so")
+                if (soFile.exists()) {
+                    from(soFile)
+                    into("${destBase}/${abiDir.name}")
+                    doFirst {
+                        println("[PVR] Copying ${soFile} -> ${destBase}/${abiDir.name}/")
+                    }
+                }
             }
         }
     } else {
-        println "[PVR] ALVR build dir not found: ${alvrBuildDir}"
+        doFirst { println("[PVR] ALVR build dir not found: ${alvrBuildDir}") }
     }
 }
 
-// Ensure we run the copy before preBuild so the native library is present when packaging
-preBuild.dependsOn(copyAlvrLibs)
+// Ensure the copy runs before any preBuild task is executed. Use whenTaskAdded to avoid
+// referencing preBuild at configuration time (some AGP versions/variants create tasks later).
+
+tasks.whenTaskAdded { task ->
+    if (task.name == "preBuild" || task.name.endsWith("PreBuild")) {
+        task.dependsOn(copyAlvrLibs)
+    }
+}
